@@ -1,0 +1,23 @@
+# Remote Server MCP Configuration
+# Copy this file to config.yaml and update with your server details
+
+ssh:
+  # Server connection details
+  host: "your-server.example.com"
+  port: 22
+  username: "your-username"
+  
+  # Authentication: choose ONE of the following
+  # Option 1: Password authentication (less secure)
+  # password: "your-password"
+  
+  # Option 2: SSH key authentication (recommended)
+  key_path: "~/.ssh/id_rsa"
+
+security:
+  # Service directory base path - all operations restricted to this path
+  services_path: "/srv"
+  
+  # NEVER allow generic command execution (recommended: false)
+  # If set to true, DANGEROUS - only enable if you absolutely must
+  allow_generic_commands: false
