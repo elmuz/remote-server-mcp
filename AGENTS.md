@@ -51,6 +51,7 @@ Pre-commit hooks run automatically on `git commit`:
 - **pytest**: Run all tests
 
 To run manually:
+
 ```bash
 pre-commit run --all-files
 ```

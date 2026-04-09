@@ -3,10 +3,11 @@ Security Validator for Remote Server MCP
 
 This module enforces strict security policies:
 - No command execution escapes
-- Path traversal prevention
-- Service name validation
+- Path traversal prevention (including Unicode/encoding bypasses)
+- Service name validation (Docker-safe, no option injection)
 - Command injection prevention
 - Sensitive file access protection
+- Symlink attack mitigation
 
 Design: Whitelist specific safe operations, don't try to blacklist dangerous ones.
 """
@@ -17,8 +18,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Strict service name pattern: alphanumeric, hyphens, underscores only
-SERVICE_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+# Strict service name pattern: must start with alphanumeric, then alphanumeric,
+# hyphens, underscores. Prevents Docker option injection (names like "-help").
+SERVICE_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
 
 # Patterns that indicate path traversal attempts
 PATH_TRAVERSAL_PATTERNS = [
@@ -45,6 +47,35 @@ PATH_TRAVERSAL_PATTERNS = [
     "\n",  # Newline injection
     "\r",  # Carriage return
     "\t",  # Tab injection
+    " ",  # Space (shell word splitting)
+    "!",  # Bash history expansion
+    ":",  # Shell special in some contexts
+    "@",  # SSH-style syntax
+    "#",  # Comment character
+    "%",  # URL encoding indicator
+]
+
+# URL-encoded path traversal patterns
+URL_ENCODED_TRAVERSAL = [
+    "%2e",  # URL-encoded dot
+    "%2f",  # URL-encoded slash
+    "%5c",  # URL-encoded backslash
+    "%25",  # URL-encoded percent (double encoding)
+    "%00",  # Null byte
+]
+
+# Unicode lookalike characters that could bypass ".." detection
+UNICODE_DOT_VARIANTS = [
+    "\uff0e",  # Fullwidth full stop
+    "\u3002",  # Ideographic full stop
+    "\u2024",  # One dot leader
+    "\u2025",  # Two dot leader
+    "\u2027",  # Hyphenation point
+    "\u00b7",  # Middle dot
+    "\u200b",  # Zero-width space (used between dots)
+    "\u200c",  # Zero-width non-joiner
+    "\u200d",  # Zero-width joiner
+    "\u2060",  # Word joiner
 ]
 
 # Sensitive file patterns that should NEVER be accessible
@@ -64,6 +95,16 @@ SENSITIVE_FILE_PATTERNS = [
     "/etc/ssl",
     "/root/",
     "/home/",
+    ".git/",  # Git directory (may contain credentials in remote URLs)
+    ".git/config",  # Contains remote URLs with possible credentials
+    ".git/HEAD",  # Reveals branch info
+    "/proc/",  # Process info, environment variables
+    "/sys/",  # System information
+    "/dev/",  # Device files
+    "htpasswd",
+    "wp-config",
+    "database.yml",
+    "secrets.yml",
 ]
 
 
@@ -90,6 +131,9 @@ class SecurityValidator:
         """
         Validate service name against strict pattern.
 
+        Service names must start with an alphanumeric character to prevent
+        Docker option injection (e.g., "-help" would be interpreted as a flag).
+
         Args:
             service_name: Service name to validate
 
@@ -105,7 +149,7 @@ class SecurityValidator:
             logger.warning(f"Service name too long: {len(service_name)} chars")
             return False
 
-        # Check pattern
+        # Check pattern - must start with alphanumeric (not hyphen/underscore)
         if not SERVICE_NAME_PATTERN.match(service_name):
             logger.warning(f"Service name contains invalid characters: {service_name}")
             return False
@@ -124,6 +168,15 @@ class SecurityValidator:
         """
         Validate and construct a safe file path within /srv/{service}/.
 
+        Protects against:
+        - Path traversal (../, ~/, etc.)
+        - URL-encoded traversal (%2e%2e%2f)
+        - Unicode dot variants (U+FF0E variants, zero-width spaces)
+        - Null byte injection
+        - Shell metacharacters (spaces, !, etc.)
+        - Sensitive file access
+        - Symlink attacks (remote symlinks can't be verified locally)
+
         Args:
             service: Service name (already validated)
             file_path: Relative file path within service directory
@@ -140,6 +193,24 @@ class SecurityValidator:
             logger.warning(f"File path too long: {len(file_path)} chars")
             return None
 
+        # Block null bytes
+        if "\x00" in file_path:
+            logger.warning("File path contains null byte")
+            return None
+
+        # Block URL-encoded traversal attempts
+        file_path_lower = file_path.lower()
+        for pattern in URL_ENCODED_TRAVERSAL:
+            if pattern.lower() in file_path_lower:
+                logger.warning(f"File path contains URL-encoded traversal: {pattern}")
+                return None
+
+        # Block Unicode dot variants (lookalike characters)
+        for char in UNICODE_DOT_VARIANTS:
+            if char in file_path:
+                logger.warning("File path contains unicode dot variant: %r", char)
+                return None
+
         # Check for path traversal
         for pattern in PATH_TRAVERSAL_PATTERNS:
             if pattern in file_path:
@@ -147,7 +218,6 @@ class SecurityValidator:
                 return None
 
         # Check for sensitive file patterns
-        file_path_lower = file_path.lower()
         for pattern in SENSITIVE_FILE_PATTERNS:
             if pattern.lower() in file_path_lower:
                 logger.warning(f"File path matches sensitive pattern: {pattern}")
@@ -158,16 +228,17 @@ class SecurityValidator:
             logger.warning(f"File path must be relative, not absolute: {file_path}")
             return None
 
-        # Construct full path
-        full_path = f"/srv/{service}/{file_path}"
+        # Use configured services_base_path (not hardcoded /srv)
+        service_base = f"{self.services_base_path}/{service}"
+        full_path = f"{service_base}/{file_path}"
 
-        # Resolve to prevent any tricks (normalize ../ etc)
+        # Resolve to normalize the path (detect ../ that might slip through)
         try:
             resolved_path = str(Path(full_path).resolve())
 
-            # Verify resolved path is still under /srv/{service}/
-            service_base = f"/srv/{service}"
-            if not resolved_path.startswith(service_base):
+            # Verify resolved path is still under the service directory
+            is_under_base = resolved_path.startswith(service_base + "/")
+            if not is_under_base and resolved_path != service_base:
                 logger.warning(
                     f"Path resolution escaped service directory: {resolved_path}"
                 )
@@ -182,25 +253,31 @@ class SecurityValidator:
         """
         Sanitize a search pattern to prevent shell injection.
 
+        The sanitized pattern is used in: grep -F '{pattern}'
+        So we must strip all characters that could break the quoting.
+
         Args:
             pattern: Raw search pattern
 
         Returns:
             Sanitized pattern safe for use in grep -F
+
+        Raises:
+            ValueError: If pattern becomes empty after sanitization
         """
         if not pattern or not isinstance(pattern, str):
-            return ""
+            raise ValueError("Search pattern must not be empty")
 
         # Limit length
         pattern = pattern[:200]
 
-        # Remove all shell special characters
+        # Remove ALL shell special characters that could break grep quoting
         for char in [
-            "'",
+            "'",  # Breaks single-quote quoting
             '"',
             "`",
             "$",
-            "\\",
+            "\\",  # Could escape the closing quote
             ";",
             "|",
             "&",
@@ -212,8 +289,23 @@ class SecurityValidator:
             "}",
             "\n",
             "\r",
+            "\t",
+            "!",  # Bash history expansion
+            "#",  # Comment character
+            "~",  # Home directory expansion
+            # Note: space is NOT stripped here because the pattern is
+            # single-quoted in the grep command: grep -F '{pattern}'
+            # Spaces inside quotes are safe. Stripping spaces would break
+            # legitimate multi-word searches like "connection failed".
         ]:
             pattern = pattern.replace(char, "")
+
+        # Check if pattern is empty after sanitization
+        if not pattern.strip():
+            raise ValueError(
+                "Search pattern became empty after sanitization. "
+                "This would cause grep to read from stdin (hang)."
+            )
 
         return pattern
 

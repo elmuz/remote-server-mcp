@@ -50,6 +50,7 @@ nano config.yaml
 ```
 
 Update these fields:
+
 ```yaml
 ssh:
   host: "your-server.example.com"
@@ -72,6 +73,7 @@ uv run python test_tools.py
 The MCP server is **already configured** in `.qwen/settings.json`. Just restart Qwen Code!
 
 **Example conversation:**
+
 ```
 You: "Can you check what's wrong with my web-server service?"
 
@@ -159,6 +161,7 @@ The test suite covers:
 - Tool registration verification
 
 Run them:
+
 ```bash
 uv run pytest tests/test_security.py -v
 ```
@@ -174,6 +177,7 @@ uv run pytest tests/test_security.py -v
 - Check `config.yaml` has correct host/credentials
 
 **Tests failing?**
+
 ```bash
 uv run pytest tests/test_security.py -v
 ```

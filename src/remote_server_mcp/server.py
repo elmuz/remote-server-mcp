@@ -86,7 +86,9 @@ async def get_service_logs(service: str, lines: int = 100) -> str:
     lines = min(lines, 1000)
 
     try:
-        cmd = f"docker logs --tail {lines} {service} 2>&1"
+        # Use '--' to prevent Docker option injection even if service
+        # validation is somehow bypassed (defense in depth)
+        cmd = f"docker logs --tail {lines} -- {service} 2>&1"
         result = await ssh_manager.execute_safe_command(cmd)
         return result
     except Exception as e:
@@ -111,29 +113,29 @@ async def get_service_status(service: str) -> str:
         return f"❌ Service '{service}' does not exist in /srv/"
 
     try:
-        commands = [
-            (
-                f"echo '=== Docker Status ===' && docker inspect "
-                f"--format='Name: {{{{.Name}}}}\nState: {{{{.State.Status}}}}\n"
-                f"Running: {{{{.State.Running}}}}\n"
-                f"RestartCount: {{{{.RestartCount}}}}\n"
-                f"StartedAt: {{{{.State.StartedAt}}}}' {service} 2>&1"
-            ),
-            (
-                f"echo '=== Resource Usage ===' && docker stats --no-stream {service} "
-                f"--format='CPU: {{{{.CPUPerc}}}}\nMemory: {{{{.MemUsage}}}}\n"
-                f"Net I/O: {{{{.NetIO}}}}' 2>&1"
-            ),
-            (
-                f"echo '=== Ports ===' && docker port {service} "
-                f"2>&1 || echo 'No ports exposed'"
-            ),
-        ]
-
+        # Use '--' to prevent Docker option injection (defense in depth)
+        cmd = (
+            f"docker inspect "
+            f"--format='Name: {{{{.Name}}}}\nState: {{{{.State.Status}}}}\n"
+            f"Running: {{{{.State.Running}}}}\n"
+            f"RestartCount: {{{{.RestartCount}}}}\n"
+            f"StartedAt: {{{{.State.StartedAt}}}}' -- {service} 2>&1"
+        )
         results = []
-        for cmd in commands:
-            output = await ssh_manager.execute_safe_command(cmd)
-            results.append(output)
+        output = await ssh_manager.execute_safe_command(cmd)
+        results.append(f"=== Docker Status ===\n{output}")
+
+        cmd = (
+            f"docker stats --no-stream -- {service} "
+            f"--format='CPU: {{{{.CPUPerc}}}}\nMemory: {{{{.MemUsage}}}}\n"
+            f"Net I/O: {{{{.NetIO}}}}' 2>&1"
+        )
+        output = await ssh_manager.execute_safe_command(cmd)
+        results.append(f"=== Resource Usage ===\n{output}")
+
+        cmd = f"docker port -- {service} 2>&1 || echo 'No ports exposed'"
+        output = await ssh_manager.execute_safe_command(cmd)
+        results.append(f"=== Ports ===\n{output}")
 
         return "\n\n".join(results)
     except Exception as e:
@@ -158,7 +160,8 @@ async def restart_service(service: str) -> str:
         return f"❌ Service '{service}' does not exist in /srv/"
 
     try:
-        cmd = f"docker restart {service} 2>&1"
+        # Use '--' to prevent Docker option injection (defense in depth)
+        cmd = f"docker restart -- {service} 2>&1"
         result = await ssh_manager.execute_safe_command(cmd)
         return f"✅ Service '{service}' restarted\n{result}"
     except Exception as e:
@@ -183,7 +186,8 @@ async def start_service(service: str) -> str:
         return f"❌ Service '{service}' does not exist in /srv/"
 
     try:
-        cmd = f"docker start {service} 2>&1"
+        # Use '--' to prevent Docker option injection (defense in depth)
+        cmd = f"docker start -- {service} 2>&1"
         result = await ssh_manager.execute_safe_command(cmd)
         return f"✅ Service '{service}' started\n{result}"
     except Exception as e:
@@ -208,7 +212,8 @@ async def stop_service(service: str) -> str:
         return f"❌ Service '{service}' does not exist in /srv/"
 
     try:
-        cmd = f"docker stop {service} 2>&1"
+        # Use '--' to prevent Docker option injection (defense in depth)
+        cmd = f"docker stop -- {service} 2>&1"
         result = await ssh_manager.execute_safe_command(cmd)
         return f"✅ Service '{service}' stopped\n{result}"
     except Exception as e:
@@ -298,8 +303,11 @@ async def search_service_logs(service: str, pattern: str, lines: int = 1000) -> 
     if not security.validate_service_name(service):
         return f"❌ Invalid service name: {service}"
 
-    # Sanitize pattern - escape any shell special characters
-    sanitized_pattern = security.sanitize_search_pattern(pattern)
+    # Sanitize pattern - raises ValueError if empty after sanitization
+    try:
+        sanitized_pattern = security.sanitize_search_pattern(pattern)
+    except ValueError as e:
+        return f"❌ Invalid search pattern: {e}"
 
     # Limit lines
     lines = min(lines, 5000)
@@ -307,7 +315,8 @@ async def search_service_logs(service: str, pattern: str, lines: int = 1000) -> 
     try:
         # Use grep with fixed strings (no regex) for safety
         cmd = (
-            f"docker logs --tail {lines} {service} 2>&1 | grep -F '{sanitized_pattern}'"
+            f"docker logs --tail {lines} -- {service} 2>&1 | "
+            f"grep -F '{sanitized_pattern}'"
         )
         result = await ssh_manager.execute_safe_command(cmd)
 

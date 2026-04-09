@@ -27,3 +27,18 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+
+      # Markdown linting (style/formatting)
+      - id: pymarkdown
+        name: pymarkdown
+        entry: uv run pymarkdown -c .pymarkdown fix
+        language: system
+        types: [markdown]
+
+      # Markdown link checking (relative links + anchors)
+      - id: check-md-links
+        name: check-md-links
+        entry: uv run python scripts/check_md_links.py
+        language: system
+        types: [markdown]
+        pass_filenames: false
