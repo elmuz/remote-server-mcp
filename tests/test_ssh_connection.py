@@ -10,18 +10,14 @@ Run with:
 """
 
 import asyncio
-import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
 from remote_server_mcp import server as mcp_server
-from remote_server_mcp.config import load_config
-from remote_server_mcp.security import SecurityValidator
-from remote_server_mcp.ssh_manager import SSHManager
+from server_management_lib import SecurityValidator, load_config
+from server_management_lib.ssh_manager import SSHManager
 
 # ============================================================================
 # Fixtures
@@ -147,7 +143,7 @@ class TestSSHConnection:
                 assert m.connection is not None
 
             # After exiting context, should be disconnected
-            # Note: disconnect() sets _connected=False but connection object might still exist
+            assert m._connected is False
 
         asyncio.run(run_test())
 
@@ -210,7 +206,7 @@ class TestSSHManagerMock:
 
             # Mock asyncssh.connect to raise exception
             with patch(
-                "remote_server_mcp.ssh_manager.asyncssh.connect"
+                "server_management_lib.ssh_manager.asyncssh.connect"
             ) as mock_connect:
                 mock_connect.side_effect = Exception("Connection refused")
 

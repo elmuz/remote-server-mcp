@@ -19,7 +19,7 @@ TDD Approach: These tests should FAIL initially, then pass after fixes.
 
 import pytest
 
-from remote_server_mcp.security import SecurityValidator
+from server_management_lib import SecurityValidator
 
 # ============================================================================
 # 1. Symlink Attack Tests

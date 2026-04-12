@@ -15,16 +15,13 @@ Run with:
 
 import asyncio
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
 from remote_server_mcp import server as mcp_server
-from remote_server_mcp.config import load_config
-from remote_server_mcp.security import SecurityValidator
+from server_management_lib import SecurityValidator, load_config
+from server_management_lib.http_clients import INFLUXDB_ALLOWED_ENDPOINTS
 
 # ============================================================================
 # Fixtures
@@ -299,83 +296,81 @@ class TestInfluxDBEndpointWhitelist:
 
     def test_whitelist_constant_exists(self):
         """The whitelist constant must exist in the server module."""
-        assert hasattr(mcp_server, "INFLUXDB_ALLOWED_ENDPOINTS")
+        assert INFLUXDB_ALLOWED_ENDPOINTS is not None
 
     def test_query_sql_allowed(self):
         """query_sql must be in the whitelist (primary read endpoint)."""
-        assert "/api/v3/query_sql" in mcp_server.INFLUXDB_ALLOWED_ENDPOINTS
+        assert "/api/v3/query_sql" in INFLUXDB_ALLOWED_ENDPOINTS
 
     def test_query_influxql_allowed(self):
         """query_influxql must be in the whitelist (legacy query endpoint)."""
-        assert "/api/v3/query_influxql" in mcp_server.INFLUXDB_ALLOWED_ENDPOINTS
+        assert "/api/v3/query_influxql" in INFLUXDB_ALLOWED_ENDPOINTS
 
     def test_health_allowed(self):
         """/health must be in the whitelist for health checks."""
-        assert "/health" in mcp_server.INFLUXDB_ALLOWED_ENDPOINTS
+        assert "/health" in INFLUXDB_ALLOWED_ENDPOINTS
 
     def test_metrics_allowed(self):
         """/metrics must be in the whitelist for Prometheus scraping."""
-        assert "/metrics" in mcp_server.INFLUXDB_ALLOWED_ENDPOINTS
+        assert "/metrics" in INFLUXDB_ALLOWED_ENDPOINTS
 
     def test_ping_allowed(self):
         """/ping must be in the whitelist."""
-        assert "/ping" in mcp_server.INFLUXDB_ALLOWED_ENDPOINTS
+        assert "/ping" in INFLUXDB_ALLOWED_ENDPOINTS
 
     def test_database_delete_blocked(self):
         """DELETE /api/v3/configure/database must NOT be allowed."""
-        assert "/api/v3/configure/database" not in mcp_server.INFLUXDB_ALLOWED_ENDPOINTS
+        assert "/api/v3/configure/database" not in INFLUXDB_ALLOWED_ENDPOINTS
 
     def test_database_create_blocked(self):
         """POST /api/v3/configure/database must NOT be allowed."""
-        assert "/api/v3/configure/database" not in mcp_server.INFLUXDB_ALLOWED_ENDPOINTS
+        assert "/api/v3/configure/database" not in INFLUXDB_ALLOWED_ENDPOINTS
 
     def test_table_delete_blocked(self):
         """DELETE /api/v3/configure/table must NOT be allowed."""
-        assert "/api/v3/configure/table" not in mcp_server.INFLUXDB_ALLOWED_ENDPOINTS
+        assert "/api/v3/configure/table" not in INFLUXDB_ALLOWED_ENDPOINTS
 
     def test_table_create_blocked(self):
         """POST /api/v3/configure/table must NOT be allowed."""
-        assert "/api/v3/configure/table" not in mcp_server.INFLUXDB_ALLOWED_ENDPOINTS
+        assert "/api/v3/configure/table" not in INFLUXDB_ALLOWED_ENDPOINTS
 
     def test_write_lp_blocked(self):
         """POST /api/v3/write_lp must NOT be allowed (data write)."""
-        assert "/api/v3/write_lp" not in mcp_server.INFLUXDB_ALLOWED_ENDPOINTS
+        assert "/api/v3/write_lp" not in INFLUXDB_ALLOWED_ENDPOINTS
 
     def test_write_v2_blocked(self):
         """POST /api/v2/write must NOT be allowed (data write)."""
-        assert "/api/v2/write" not in mcp_server.INFLUXDB_ALLOWED_ENDPOINTS
+        assert "/api/v2/write" not in INFLUXDB_ALLOWED_ENDPOINTS
 
     def test_token_delete_blocked(self):
         """DELETE /api/v3/configure/token must NOT be allowed."""
-        assert "/api/v3/configure/token" not in mcp_server.INFLUXDB_ALLOWED_ENDPOINTS
+        assert "/api/v3/configure/token" not in INFLUXDB_ALLOWED_ENDPOINTS
 
     def test_token_create_blocked(self):
         """POST /api/v3/configure/token/admin must NOT be allowed."""
-        assert (
-            "/api/v3/configure/token/admin" not in mcp_server.INFLUXDB_ALLOWED_ENDPOINTS
-        )
+        assert "/api/v3/configure/token/admin" not in INFLUXDB_ALLOWED_ENDPOINTS
 
     def test_plugin_upload_blocked(self):
         """POST /api/v3/plugins/files must NOT be allowed (RCE vector)."""
-        assert "/api/v3/plugins/files" not in mcp_server.INFLUXDB_ALLOWED_ENDPOINTS
+        assert "/api/v3/plugins/files" not in INFLUXDB_ALLOWED_ENDPOINTS
 
     def test_plugin_env_install_blocked(self):
         """Plugin package install must NOT be allowed."""
         assert (
             "/api/v3/configure/plugin_environment/install_packages"
-            not in mcp_server.INFLUXDB_ALLOWED_ENDPOINTS
+            not in INFLUXDB_ALLOWED_ENDPOINTS
         )
 
     def test_processing_engine_blocked(self):
         """Processing engine triggers must NOT be allowed."""
         assert (
             "/api/v3/configure/processing_engine_trigger"
-            not in mcp_server.INFLUXDB_ALLOWED_ENDPOINTS
+            not in INFLUXDB_ALLOWED_ENDPOINTS
         )
 
     def test_no_configure_endpoints_allowed(self):
         """No /configure/ endpoints should be in the whitelist."""
-        for endpoint in mcp_server.INFLUXDB_ALLOWED_ENDPOINTS:
+        for endpoint in INFLUXDB_ALLOWED_ENDPOINTS:
             assert "/configure/" not in endpoint, (
                 f"Configure endpoint '{endpoint}' must not be allowed"
             )

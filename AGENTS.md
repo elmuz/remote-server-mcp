@@ -1,10 +1,24 @@
-# Playground Agents - Remote Server MCP
+# Remote Server MCP — Agent Instructions
 
 ## Project Overview
 
 **remote-server-mcp** is a security-first MCP (Model Context Protocol) server for managing remote servers via SSH. It provides AI assistants with controlled, safe operations for debugging services without exposing credentials or allowing dangerous commands.
 
-This is the **main project** in this directory, not a subagent. It's a complete MCP server that can be used with Qwen Code, Claude Desktop, or any MCP client.
+This is a **thin MCP server layer** built on top of **server-management-lib** (a separate library that provides security validation, SSH management, and HTTP clients for InfluxDB/Prometheus).
+
+## Architecture
+
+```text
+src/remote_server_mcp/          # This project
+├── server.py                   # MCP server (13 tools)
+└── __init__.py                 # Entry point
+
+server-management-lib           # External dependency (GitHub)
+├── security.py                 # SecurityValidator
+├── ssh_manager.py              # SSHManager
+├── http_clients.py             # InfluxDBClient, PrometheusClient
+└── config.py                   # load_config, DEFAULT_CONFIG
+```
 
 ## Development Workflow
 
@@ -12,7 +26,7 @@ This is the **main project** in this directory, not a subagent. It's a complete 
 
 ```bash
 # Install with dev dependencies
-uv pip install -e ".[dev]" --python .venv
+uv sync --all-extras
 
 # Install pre-commit hooks
 pre-commit install
@@ -21,13 +35,17 @@ pre-commit install
 ### Development Commands
 
 ```bash
-# Run tests
+# Run all tests
 uv run pytest tests/ -v
 
-# Run security tests only
-uv run pytest tests/test_security.py -v
+# Security tests only
+uv run pytest tests/test_security.py tests/test_security_bypass.py -v
 
-# Run linting
+# Database tests (unit + live integration tests)
+uv run pytest tests/test_database_tools.py -v
+uv run pytest tests/test_database_tools.py -v -k live   # live tests only
+
+# Linting
 uv run ruff check .
 
 # Fix linting issues
@@ -40,7 +58,7 @@ uv run ruff format .
 uv run ty check
 
 # Run all checks (what pre-commit does)
-uv run ruff check . && uv run ruff format . && uv run ty check && uv run pytest tests/ -v
+env -u VIRTUAL_ENV pre-commit run --all-files
 ```
 
 ### Pre-commit Hooks
@@ -50,11 +68,13 @@ Pre-commit hooks run automatically on `git commit`:
 - **ruff**: Linting and formatting
 - **ty**: Type checking
 - **pytest**: Run all tests
+- **pymarkdown**: Markdown style/formatting
+- **check-md-links**: Markdown link validation
 
-To run manually:
+Run manually:
 
 ```bash
-pre-commit run --all-files
+env -u VIRTUAL_ENV pre-commit run --all-files
 ```
 
 ## Security Philosophy
@@ -65,14 +85,20 @@ pre-commit run --all-files
 - 🔒 All paths restricted to `/srv/{service}/`
 - 🛡️ Comprehensive input validation and sanitization
 
-See `README.md` for full security documentation.
+Security logic lives in **server-management-lib**, not in this project. The MCP server imports and uses it:
+
+```python
+from server_management_lib import SecurityValidator, SSHManager, load_config
+```
+
+See `README.md` and `docs/security-model.md` for full documentation.
 
 ## Quick Start (Server)
 
 ### 1. Install
 
 ```bash
-uv pip install -e . --python .venv
+uv sync --all-extras
 ```
 
 ### 2. Configure
@@ -85,16 +111,27 @@ nano config.yaml  # Add your SSH details
 ### 3. Test
 
 ```bash
-# Run security tests
-uv run pytest tests/test_security.py -v
-
-# Verify tools
-uv run python test_tools.py
+# Run all tests
+uv run pytest tests/ -v
 ```
 
 ### 4. Use with Qwen Code
 
-Already configured in `.qwen/settings.json`. Just restart Qwen Code!
+Add to `.qwen/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "remote-server": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "remote_server_mcp.server"],
+      "cwd": "/path/to/remote-server-mcp"
+    }
+  }
+}
+```
+
+Then restart Qwen Code.
 
 ## Available Tools
 
@@ -114,29 +151,6 @@ Already configured in `.qwen/settings.json`. Just restart Qwen Code!
 | `query_prometheus` | Query Prometheus via PromQL |
 | `get_prometheus_targets` | List Prometheus scrape targets |
 
-## Architecture
-
-```text
-src/remote_server_mcp/
-├── server.py              # MCP server (10 tools)
-├── ssh_manager.py         # SSH connection handler
-├── security.py            # Security validator
-└── config.py              # Configuration loader
-
-tests/
-└── test_security.py       # 20 security tests
-```
-
-## Security Controls
-
-1. **No exec_command()** - Removed entirely
-2. **Path restriction** - `/srv/{service}/` only
-3. **Service validation** - Alphanumeric + hyphens/underscores
-4. **Path traversal prevention** - Blocks `../` and escapes
-5. **Sensitive file blocking** - `.env`, `*.key`, etc.
-6. **Command injection prevention** - All inputs sanitized
-7. **Docker restrictions** - Only safe commands allowed
-
 ## Testing
 
 ```bash
@@ -144,11 +158,13 @@ tests/
 uv run pytest tests/ -v
 
 # Security tests only
-uv run pytest tests/test_security.py -v
+uv run pytest tests/test_security.py tests/test_security_bypass.py -v
 
-# Coverage report
-uv run pytest tests/ --cov=remote_server_mcp
+# With coverage (requires pytest-cov)
+uv run pytest tests/ --cov=remote_server_mcp --cov=server_management_lib
 ```
+
+**158 tests, 62% coverage** (as of last run).
 
 ## What is MCP?
 
@@ -171,8 +187,8 @@ async def my_new_tool(service: str) -> str:
     """Description of the tool."""
     if not security.validate_service_name(service):
         return "❌ Invalid service name"
-    
-    cmd = f"safe-command {service}"
+
+    cmd = f"safe-command -- {service}"
     return await ssh_manager.execute_safe_command(cmd)
 ```
 
@@ -190,7 +206,7 @@ All tools MUST:
 **Every time you finalize a feature or bugfix, run the full check suite:**
 
 ```bash
-uv run ruff check . && uv run ruff format --check . && uv run ty check && uv run pymarkdown -c .pymarkdown scan . && uv run python scripts/check_md_links.py && uv run pytest tests/ -v --tb=short
+env -u VIRTUAL_ENV pre-commit run --all-files
 ```
 
 This runs all pre-commit hooks in order:
@@ -200,11 +216,19 @@ This runs all pre-commit hooks in order:
 | Lint | `ruff check` | Style errors, unused imports, ambiguous characters |
 | Format | `ruff format` | Code formatting consistency |
 | Types | `ty check` | Type mismatches, invalid assignments |
-| Markdown | `pymarkdown scan` | Formatting, heading duplicates, code block languages |
-| Links | `check_md_links.py` | Broken relative links and anchors |
 | Tests | `pytest` | Regressions, new test coverage |
+| Markdown | `pymarkdown` | Formatting, heading duplicates, code block languages |
+| Links | `check-md-links` | Broken relative links and anchors |
 
 **All must pass before committing.** If any fail, fix the issues first — never commit on a broken state.
+
+### Important: VIRTUAL_ENV
+
+If you have `VIRTUAL_ENV` set to a different project (e.g., from PyCharm or another terminal), pre-commit hooks will fail. Always run with `env -u VIRTUAL_ENV` or clear the variable first:
+
+```bash
+unset VIRTUAL_ENV
+```
 
 ## License
 

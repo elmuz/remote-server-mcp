@@ -8,8 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from remote_server_mcp.config import load_config
-from remote_server_mcp.security import SecurityValidator
+from server_management_lib import SecurityValidator, load_config
 
 # ============================================================================
 # Security Validator Tests
@@ -254,7 +253,7 @@ class TestConfiguration:
 
     def test_default_config_exists(self):
         """Test default configuration is valid."""
-        from remote_server_mcp.config import DEFAULT_CONFIG
+        from server_management_lib import DEFAULT_CONFIG
 
         assert "ssh" in DEFAULT_CONFIG
         assert "security" in DEFAULT_CONFIG

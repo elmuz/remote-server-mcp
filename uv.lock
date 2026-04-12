@@ -1329,11 +1329,8 @@ name = "remote-server-mcp"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "aiohttp" },
-    { name = "asyncssh" },
     { name = "mcp" },
-    { name = "pydantic" },
-    { name = "pyyaml" },
+    { name = "server-management-lib" },
 ]
 
 [package.optional-dependencies]
@@ -1347,15 +1344,12 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", specifier = ">=3.9.0" },
-    { name = "asyncssh", specifier = ">=2.14.0" },
     { name = "mcp", specifier = ">=1.0.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0.0" },
-    { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pymarkdownlnt", marker = "extra == 'dev'", specifier = ">=0.9.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9.0" },
+    { name = "server-management-lib", git = "https://github.com/elmuz/server-management-lib.git" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1a10" },
 ]
 provides-extras = ["dev"]
@@ -1491,6 +1485,17 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/88/3d/1364fcde8656962782aa9ea93c92d98682b1ecec2f184e625a965ad3b4a6/ruff-0.15.9-py3-none-win32.whl", hash = "sha256:bde6ff36eaf72b700f32b7196088970bf8fdb2b917b7accd8c371bfc0fd573ec", size = 10583382, upload-time = "2026-04-02T18:17:04.261Z" },
     { url = "https://files.pythonhosted.org/packages/4c/56/5c7084299bd2cacaa07ae63a91c6f4ba66edc08bf28f356b24f6b717c799/ruff-0.15.9-py3-none-win_amd64.whl", hash = "sha256:45a70921b80e1c10cf0b734ef09421f71b5aa11d27404edc89d7e8a69505e43d", size = 11744969, upload-time = "2026-04-02T18:16:59.611Z" },
     { url = "https://files.pythonhosted.org/packages/03/36/76704c4f312257d6dbaae3c959add2a622f63fcca9d864659ce6d8d97d3d/ruff-0.15.9-py3-none-win_arm64.whl", hash = "sha256:0694e601c028fd97dc5c6ee244675bc241aeefced7ef80cd9c6935a871078f53", size = 11005870, upload-time = "2026-04-02T18:17:15.773Z" },
+]
+
+[[package]]
+name = "server-management-lib"
+version = "0.1.0"
+source = { git = "https://github.com/elmuz/server-management-lib.git#3e7a9c754e89cd14319d62dbde21015c7e131700" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "asyncssh" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
 ]
 
 [[package]]

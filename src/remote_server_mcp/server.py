@@ -12,16 +12,18 @@ Design Principle: Whitelist operations, don't blacklist commands.
 """
 
 import asyncio
-import json
 import logging
 from pathlib import Path
 
-import aiohttp
 from mcp.server.fastmcp import FastMCP
 
-from .config import load_config
-from .security import SecurityValidator
-from .ssh_manager import SSHManager
+from server_management_lib import (
+    InfluxDBClient,
+    PrometheusClient,
+    SecurityValidator,
+    SSHManager,
+    load_config,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -39,20 +41,6 @@ ssh_manager = SSHManager(config, security)
 
 # Create MCP server
 mcp = FastMCP("remote-server-mcp")
-
-# InfluxDB API endpoint whitelist (defense-in-depth)
-# Limits the admin token to read-only / info endpoints only.
-# Even if config or code is modified later, requests to destructive
-# endpoints (/configure/database, /write_lp, etc.) are blocked here.
-INFLUXDB_ALLOWED_ENDPOINTS: frozenset[str] = frozenset(
-    {
-        "/api/v3/query_sql",
-        "/api/v3/query_influxql",
-        "/health",
-        "/metrics",
-        "/ping",
-    }
-)
 
 
 @mcp.tool()
@@ -382,66 +370,15 @@ async def query_influxdb(query: str, database: str | None = None) -> str:
             "'influxdb.database' in config.yaml."
         )
 
-    host = influxdb_config.get("host", "localhost")
-    port = influxdb_config.get("port", 8181)
-    use_https = influxdb_config.get("use_https", False)
-    token = influxdb_config.get("token")
-    limit = min(influxdb_config.get("query_limit", 1000), 10000)
-
-    scheme = "https" if use_https else "http"
-    path = "/api/v3/query_sql"
-    url = f"{scheme}://{host}:{port}{path}"
-
-    # Defense-in-depth: whitelist the endpoint so even if the path
-    # construction changes, requests to admin/write endpoints are blocked
-    if path not in INFLUXDB_ALLOWED_ENDPOINTS:
-        return f"❌ Blocked: endpoint '{path}' is not in the allowed whitelist"
-
-    params = {
-        "db": db,
-        "q": validated_query,
-        "limit": limit,
-    }
-
-    headers: dict[str, str] = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url, json=params, headers=headers, timeout=30
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    formatted = json.dumps(data, indent=2)
-                    return f"✅ Query successful\n\n{formatted}"
-                else:
-                    error_body = await response.text()
-
-                    # Prepend a hint for unbounded queries that fail.
-                    # This is additive — the original error body is preserved
-                    # verbatim, so Enterprise users see the real response too.
-                    hint = ""
-                    query_lower = validated_query.lower()
-                    has_time_filter = "where" in query_lower and "time" in query_lower
-                    if not has_time_filter:
-                        hint = (
-                            "💡 Tip: InfluxDB 3 Core has a file-scan limit. "
-                            "Queries without a `WHERE time` clause may fail "
-                            "with HTTP 500. Add a time range like:\n"
-                            "   WHERE time > now() - INTERVAL '1 hour'\n\n"
-                        )
-
-                    return (
-                        f"{hint}"
-                        f"❌ InfluxDB query failed (HTTP {response.status})\n"
-                        f"{error_body[:2000]}"
-                    )
-    except aiohttp.ClientError as e:
-        return f"❌ Connection error: {e}"
-    except TimeoutError:
-        return "❌ Query timed out after 30 seconds"
+    client = InfluxDBClient(
+        host=influxdb_config.get("host", "localhost"),
+        port=influxdb_config.get("port", 8181),
+        use_https=influxdb_config.get("use_https", False),
+        database=db,
+        token=influxdb_config.get("token"),
+        query_limit=influxdb_config.get("query_limit", 1000),
+    )
+    return await client.query(validated_query)
 
 
 @mcp.tool()
@@ -465,7 +402,6 @@ async def query_prometheus(query: str, time: str | None = None) -> str:
             "Set 'prometheus.enabled: true' in config.yaml and configure host/port."
         )
 
-    # Validate the query
     validated_query = security.validate_prometheus_query(query)
     if validated_query is None:
         return (
@@ -474,50 +410,13 @@ async def query_prometheus(query: str, time: str | None = None) -> str:
             "- Not contain quotes or newlines"
         )
 
-    host = prometheus_config.get("host", "localhost")
-    port = prometheus_config.get("port", 9090)
-    use_https = prometheus_config.get("use_https", False)
-    token = prometheus_config.get("token")
-
-    scheme = "https" if use_https else "http"
-    url = f"{scheme}://{host}:{port}/api/v1/query"
-
-    params: dict[str, str] = {"query": validated_query}
-    if time:
-        params["time"] = time
-
-    headers: dict[str, str] = {}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                url, params=params, headers=headers, timeout=30
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    if data.get("status") == "success":
-                        formatted = json.dumps(data["data"], indent=2)
-                        return f"✅ Query successful\n\n{formatted}"
-                    else:
-                        error_type = data.get("errorType", "unknown")
-                        error_msg = data.get("error", "Unknown error")
-                        return (
-                            f"❌ PromQL query error\n"
-                            f"Type: {error_type}\n"
-                            f"Error: {error_msg}"
-                        )
-                else:
-                    error_body = await response.text()
-                    return (
-                        f"❌ Prometheus query failed (HTTP {response.status})\n"
-                        f"{error_body[:2000]}"
-                    )
-    except aiohttp.ClientError as e:
-        return f"❌ Connection error: {e}"
-    except TimeoutError:
-        return "❌ Query timed out after 30 seconds"
+    client = PrometheusClient(
+        host=prometheus_config.get("host", "localhost"),
+        port=prometheus_config.get("port", 9090),
+        use_https=prometheus_config.get("use_https", False),
+        token=prometheus_config.get("token"),
+    )
+    return await client.query(validated_query, time)
 
 
 @mcp.tool()
@@ -537,53 +436,13 @@ async def get_prometheus_targets() -> str:
             "Set 'prometheus.enabled: true' in config.yaml and configure host/port."
         )
 
-    host = prometheus_config.get("host", "localhost")
-    port = prometheus_config.get("port", 9090)
-    use_https = prometheus_config.get("use_https", False)
-    token = prometheus_config.get("token")
-
-    scheme = "https" if use_https else "http"
-    url = f"{scheme}://{host}:{port}/api/v1/targets"
-
-    headers: dict[str, str] = {}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=30) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    if data.get("status") == "success":
-                        targets = data.get("data", {}).get("activeTargets", [])
-                        if not targets:
-                            return "No active targets configured in Prometheus."
-
-                        # Format target summary
-                        lines = [f"✅ Found {len(targets)} active targets:\n"]
-                        for target in targets:
-                            labels = target.get("labels", {})
-                            job = labels.get("job", "unknown")
-                            instance = labels.get("instance", "unknown")
-                            health = target.get("health", "unknown")
-                            last_error = target.get("lastError", "")
-                            lines.append(
-                                f"  • {job}/{instance}: {health}"
-                                + (f" ({last_error})" if last_error else "")
-                            )
-                        return "\n".join(lines)
-                    else:
-                        return f"❌ Unexpected response: {json.dumps(data, indent=2)}"
-                else:
-                    error_body = await response.text()
-                    return (
-                        f"❌ Failed to get targets (HTTP {response.status})\n"
-                        f"{error_body[:2000]}"
-                    )
-    except aiohttp.ClientError as e:
-        return f"❌ Connection error: {e}"
-    except TimeoutError:
-        return "❌ Request timed out after 30 seconds"
+    client = PrometheusClient(
+        host=prometheus_config.get("host", "localhost"),
+        port=prometheus_config.get("port", 9090),
+        use_https=prometheus_config.get("use_https", False),
+        token=prometheus_config.get("token"),
+    )
+    return await client.get_targets()
 
 
 @mcp.tool()

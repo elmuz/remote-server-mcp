@@ -75,9 +75,6 @@ uv run python -m remote_server_mcp.server
 ```bash
 # Run all tests
 uv run pytest tests/ -v
-
-# Verify tools are registered
-uv run python test_tools.py
 ```
 
 ## Troubleshooting

@@ -3,21 +3,24 @@
 ## Project Structure
 
 ```text
-remote-server-mcp/
+remote-server-mcp/              # This project — MCP server layer
 ├── src/remote_server_mcp/
-│   ├── server.py           # MCP server (10 tools)
-│   ├── ssh_manager.py      # SSH connection handler
-│   ├── security.py         # Security validator (core logic)
-│   └── config.py           # Configuration loader
+│   ├── __init__.py             # Entry point
+│   └── server.py               # MCP server (13 tools)
 ├── tests/
 │   ├── test_security.py            # Core security tests
 │   ├── test_security_bypass.py     # Advanced bypass/encoding tests
+│   ├── test_database_tools.py      # InfluxDB + Prometheus tests
 │   └── test_ssh_connection.py      # SSH connection tests
-├── docs/                   # Documentation
+├── docs/                       # Documentation
 ├── .pre-commit-config.yaml
 ├── config.example.yaml
 └── pyproject.toml
 ```
+
+**Dependencies:**
+- **server-management-lib** — provides `SecurityValidator`, `SSHManager`, `InfluxDBClient`, `PrometheusClient`, `load_config`
+- **mcp** — Model Context Protocol framework
 
 ## Commands
 
@@ -66,7 +69,7 @@ Hooks run automatically on `git commit`:
 - **pymarkdown** — Markdown style/formatting lint
 - **check-md-links** — Markdown link validation (relative links + anchors)
 
-Run manually: `pre-commit run --all-files`
+Run manually: `env -u VIRTUAL_ENV pre-commit run --all-files`
 
 ## Adding New Tools
 

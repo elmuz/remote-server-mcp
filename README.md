@@ -5,7 +5,7 @@
 
 A security-first MCP server that gives AI assistants controlled, safe access to manage remote servers via SSH.
 
-**Design principle:** Whitelist operations, don't blacklist commands. No generic command execution — only 10 validated tools.
+**Design principle:** Whitelist operations, don't blacklist commands. No generic command execution — only 13 validated tools.
 
 ```text
 ┌───────────────┐    ┌──────────────────────────────┐    ┌──────────────┐
@@ -16,13 +16,14 @@ A security-first MCP server that gives AI assistants controlled, safe access to 
                      │  • list_services()           │
                      │  • get_service_logs()        │
                      │  • get_service_status()      │
-                     │  • restart_service()         │
-                     │  • start_service()           │
-                     │  • stop_service()            │
+                     │  • restart/start/stop        │
                      │  • get_service_file()        │
                      │  • list_service_files()      │
                      │  • search_service_logs()     │
                      │  • get_server_health()       │
+                     │  • query_influxdb()          │
+                     │  • query_prometheus()        │
+                     │  • get_prometheus_targets()  │
                      └──────────────────────────────┘
                                 │
                      All commands validated
@@ -39,6 +40,24 @@ uv run pytest tests/ -v
 ```
 
 See [Getting Started](docs/getting-started.md) for full setup instructions and Qwen Code integration.
+
+## Architecture
+
+This project is a thin MCP server layer built on top of **server-management-lib**, which provides the core security validation, SSH management, and HTTP clients:
+
+```text
+remote-server-mcp/          # This project — MCP server layer
+├── src/remote_server_mcp/
+│   ├── __init__.py         # Entry point
+│   └── server.py           # MCP tool definitions (13 tools)
+└── tests/
+
+server-management-lib/      # Shared library (separate repo)
+├── security.py             # Security validator
+├── ssh_manager.py          # SSH connection handler
+├── http_clients.py         # InfluxDB + Prometheus clients
+└── config.py               # Configuration loader
+```
 
 ## Security Model 🛡️
 

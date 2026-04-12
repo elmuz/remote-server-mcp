@@ -15,7 +15,7 @@ repos:
       # Run type checker
       - id: ty
         name: ty
-        entry: uv run ty check
+        entry: env -u VIRTUAL_ENV uv run ty check
         language: system
         types: [python]
         pass_filenames: false
@@ -23,7 +23,7 @@ repos:
       # Run tests
       - id: pytest
         name: pytest
-        entry: uv run pytest tests/ -v --tb=short
+        entry: env -u VIRTUAL_ENV uv run pytest tests/ -v --tb=short
         language: system
         types: [python]
         pass_filenames: false
@@ -31,14 +31,14 @@ repos:
       # Markdown linting (style/formatting)
       - id: pymarkdown
         name: pymarkdown
-        entry: uv run pymarkdown -c .pymarkdown fix
+        entry: env -u VIRTUAL_ENV uv run pymarkdown -c .pymarkdown fix
         language: system
         types: [markdown]
 
       # Markdown link checking (relative links + anchors)
       - id: check-md-links
         name: check-md-links
-        entry: uv run python scripts/check_md_links.py
+        entry: env -u VIRTUAL_ENV uv run python scripts/check_md_links.py
         language: system
         types: [markdown]
         pass_filenames: false
