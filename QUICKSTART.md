@@ -10,6 +10,8 @@ An MCP server that provides AI assistants with **safe, controlled operations**:
 
 ### ✅ Available Operations
 
+**SSH / Docker** (remote server via SSH):
+
 - List services in `/srv/`
 - View Docker container logs
 - Check service status and resource usage
@@ -17,6 +19,12 @@ An MCP server that provides AI assistants with **safe, controlled operations**:
 - Read service configuration files
 - Search logs for patterns
 - Monitor server health
+
+**Database Queries** (HTTP/S, no SSH):
+
+- Query InfluxDB v3 using SQL (read-only, SELECT only)
+- Query Prometheus using PromQL
+- List Prometheus scrape targets and health
 
 ### ❌ Blocked Operations
 
@@ -74,7 +82,7 @@ The MCP server is **already configured** in `.qwen/settings.json`. Just restart 
 
 **Example conversation:**
 
-```
+```text
 You: "Can you check what's wrong with my web-server service?"
 
 Qwen: [Uses get_service_logs tool]
@@ -118,7 +126,7 @@ All inputs sanitized:
 
 ## Files Created
 
-```
+```text
 src/remote_server_mcp/
 ├── server.py                # MCP server with 10 secure tools
 ├── ssh_manager.py           # SSH connection manager
@@ -152,13 +160,16 @@ cat config.yaml
 
 The test suite covers:
 
-✅ **20 tests** covering:
+✅ **140+ tests** covering:
 - Service name validation (valid/invalid names)
 - File path validation (valid paths, traversal attacks, sensitive files)
 - Search pattern sanitization
 - Command safety validation
 - Attack scenarios (injection, traversal, data extraction)
 - Tool registration verification
+- **InfluxDB query validation** (SQL injection, shell injection, write operations)
+- **Prometheus query validation** (shell injection, quote escaping)
+- **Live database integration tests** (authentication, table access, data parsing)
 
 Run them:
 

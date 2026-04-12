@@ -64,6 +64,9 @@ See [Security Model](docs/security-model.md) for the full threat model and contr
 | `list_service_files` | List service directory |
 | `search_service_logs` | Search logs (plain text) |
 | `get_server_health` | CPU / memory / disk metrics |
+| `query_influxdb` | Query InfluxDB v3 via SQL (read-only) |
+| `query_prometheus` | Query Prometheus via PromQL |
+| `get_prometheus_targets` | List Prometheus scrape targets |
 
 See [Tools](docs/tools.md) for detailed descriptions.
 

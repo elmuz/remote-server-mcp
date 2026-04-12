@@ -17,7 +17,28 @@ ssh:
 security:
   # Service directory base path - all operations restricted to this path
   services_path: "/srv"
-  
+
   # NEVER allow generic command execution (recommended: false)
   # If set to true, DANGEROUS - only enable if you absolutely must
   allow_generic_commands: false
+
+# Database query configuration (optional)
+# These sections enable read-only HTTP API queries against InfluxDB v3 and Prometheus
+# Credentials are optional - leave commented if no auth is required
+
+influxdb:
+  # enabled: false  # Set to true to enable InfluxDB query tools
+  # host: "localhost"
+  # port: 8181  # Default InfluxDB v3 port
+  # use_https: false
+  # database: "mydb"  # Default database for queries
+  # token: "your-api-token"  # Optional: read-only API token
+  # query_limit: 1000  # Maximum rows returned per query (safety limit)
+
+prometheus:
+  # enabled: false  # Set to true to enable Prometheus query tools
+  # host: "localhost"
+  # port: 9090  # Default Prometheus port
+  # use_https: false
+  # token: "your-bearer-token"  # Optional: read-only bearer token
+  # query_timeout: "30s"  # Query timeout parameter

@@ -46,6 +46,7 @@ uv run ruff check . && uv run ruff format . && uv run ty check && uv run pytest 
 ### Pre-commit Hooks
 
 Pre-commit hooks run automatically on `git commit`:
+
 - **ruff**: Linting and formatting
 - **ty**: Type checking
 - **pytest**: Run all tests
@@ -66,7 +67,7 @@ pre-commit run --all-files
 
 See `README.md` for full security documentation.
 
-## Quick Start
+## Quick Start (Server)
 
 ### 1. Install
 
@@ -109,10 +110,13 @@ Already configured in `.qwen/settings.json`. Just restart Qwen Code!
 | `list_service_files` | List service files |
 | `search_service_logs` | Search logs |
 | `get_server_health` | Server metrics |
+| `query_influxdb` | Query InfluxDB v3 via SQL (read-only) |
+| `query_prometheus` | Query Prometheus via PromQL |
+| `get_prometheus_targets` | List Prometheus scrape targets |
 
 ## Architecture
 
-```
+```text
 src/remote_server_mcp/
 ├── server.py              # MCP server (10 tools)
 ├── ssh_manager.py         # SSH connection handler
@@ -180,6 +184,27 @@ All tools MUST:
 3. Use `ssh_manager.execute_safe_command()` (never raw execution)
 4. NOT expose sensitive data
 5. NOT allow command injection
+
+### Pre-commit Verification
+
+**Every time you finalize a feature or bugfix, run the full check suite:**
+
+```bash
+uv run ruff check . && uv run ruff format --check . && uv run ty check && uv run pymarkdown -c .pymarkdown scan . && uv run python scripts/check_md_links.py && uv run pytest tests/ -v --tb=short
+```
+
+This runs all pre-commit hooks in order:
+
+| Check | Tool | What it catches |
+|-------|------|----------------|
+| Lint | `ruff check` | Style errors, unused imports, ambiguous characters |
+| Format | `ruff format` | Code formatting consistency |
+| Types | `ty check` | Type mismatches, invalid assignments |
+| Markdown | `pymarkdown scan` | Formatting, heading duplicates, code block languages |
+| Links | `check_md_links.py` | Broken relative links and anchors |
+| Tests | `pytest` | Regressions, new test coverage |
+
+**All must pass before committing.** If any fail, fix the issues first — never commit on a broken state.
 
 ## License
 

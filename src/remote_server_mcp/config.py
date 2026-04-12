@@ -23,6 +23,23 @@ DEFAULT_CONFIG = {
         # NEVER allow generic command execution
         "allow_generic_commands": False,
     },
+    "influxdb": {
+        "enabled": False,
+        "host": "localhost",
+        "port": 8181,
+        "use_https": False,
+        "database": None,
+        "token": None,
+        "query_limit": 1000,
+    },
+    "prometheus": {
+        "enabled": False,
+        "host": "localhost",
+        "port": 9090,
+        "use_https": False,
+        "token": None,
+        "query_timeout": "30s",
+    },
 }
 
 

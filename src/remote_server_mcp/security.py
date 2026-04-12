@@ -8,6 +8,7 @@ This module enforces strict security policies:
 - Command injection prevention
 - Sensitive file access protection
 - Symlink attack mitigation
+- Database query validation (read-only enforcement)
 
 Design: Whitelist specific safe operations, don't try to blacklist dangerous ones.
 """
@@ -76,6 +77,39 @@ UNICODE_DOT_VARIANTS = [
     "\u200c",  # Zero-width non-joiner
     "\u200d",  # Zero-width joiner
     "\u2060",  # Word joiner
+]
+
+# Patterns that indicate write/mutate operations in SQL/InfluxQL
+WRITE_QUERY_PATTERNS = [
+    "drop ",
+    "delete ",
+    "insert ",
+    "update ",
+    "alter ",
+    "create ",
+    "truncate ",
+    "grant ",
+    "revoke ",
+    "set password",
+    "kill ",
+]
+
+# Dangerous characters that could be used for injection in query strings
+DANGEROUS_QUERY_CHARS = [
+    ";",  # Statement terminator (SQL injection)
+    "--",  # SQL comment
+    "/*",  # Block comment start
+    "*/",  # Block comment end
+    "`",  # Command substitution
+    "$",  # Variable expansion
+    "|",  # Pipe
+    "&",  # Background
+    "{",  # Brace expansion
+    "}",  # Brace expansion
+    "\\",  # Escape
+    "\n",  # Newline
+    "\r",  # Carriage return
+    "\x00",  # Null byte
 ]
 
 # Sensitive file patterns that should NEVER be accessible
@@ -248,6 +282,98 @@ class SecurityValidator:
         except Exception as e:
             logger.warning(f"Error resolving path: {e}")
             return None
+
+    def validate_influxdb_query(self, query: str) -> str | None:
+        """
+        Validate an InfluxDB v3 SQL query for read-only safety.
+
+        Blocks:
+        - Write operations (DROP, DELETE, INSERT, UPDATE, etc.)
+        - SQL injection characters (;, --, etc.)
+        - Shell injection attempts
+
+        Args:
+            query: SQL query string to validate
+
+        Returns:
+            The query if valid, None if invalid
+        """
+        if not query or not isinstance(query, str):
+            logger.warning("Empty or invalid InfluxDB query")
+            return None
+
+        # Limit length
+        if len(query) > 5000:
+            logger.warning(f"InfluxDB query too long: {len(query)} chars")
+            return None
+
+        # Check for write operations
+        query_lower = query.lower()
+        for pattern in WRITE_QUERY_PATTERNS:
+            if pattern in query_lower:
+                logger.warning(f"InfluxDB query contains write operation: {pattern}")
+                return None
+
+        # Check for dangerous characters (shell injection)
+        for char in DANGEROUS_QUERY_CHARS:
+            if char in query:
+                logger.warning(f"InfluxDB query contains dangerous character: {char!r}")
+                return None
+
+        # Query must start with SELECT
+        if not query_lower.strip().startswith("select"):
+            logger.warning(f"InfluxDB query must start with SELECT: {query[:50]}")
+            return None
+
+        return query
+
+    def validate_prometheus_query(self, query: str) -> str | None:
+        """
+        Validate a PromQL query for safety.
+
+        PromQL is inherently read-only (no write operations exist in the
+        query API), so we mainly block shell injection characters.
+
+        Args:
+            query: PromQL expression to validate
+
+        Returns:
+            The query if valid, None if invalid
+        """
+        if not query or not isinstance(query, str):
+            logger.warning("Empty or invalid Prometheus query")
+            return None
+
+        # Limit length
+        if len(query) > 5000:
+            logger.warning(f"PromQL query too long: {len(query)} chars")
+            return None
+
+        # PromQL uses () and {} for valid syntax, so we don't block them
+        # But block shell injection characters
+        shell_injection_chars = [
+            ";",  # Command separator
+            "`",  # Command substitution
+            "$",  # Variable expansion
+            "|",  # Pipe
+            "&",  # Background
+            ">",  # Redirect
+            "<",  # Redirect
+            "\\",  # Escape
+            "\n",  # Newline
+            "\r",  # Carriage return
+            "\x00",  # Null byte
+            "'",  # Quote (could break curl quoting)
+            '"',  # Quote (could break curl quoting)
+        ]
+        for char in shell_injection_chars:
+            if char in query:
+                logger.warning(
+                    f"PromQL query contains shell injection character: {char!r}"
+                )
+                return None
+
+        return query
 
     def sanitize_search_pattern(self, pattern: str) -> str:
         """

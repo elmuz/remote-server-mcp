@@ -12,9 +12,11 @@ Design Principle: Whitelist operations, don't blacklist commands.
 """
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 
+import aiohttp
 from mcp.server.fastmcp import FastMCP
 
 from .config import load_config
@@ -37,6 +39,20 @@ ssh_manager = SSHManager(config, security)
 
 # Create MCP server
 mcp = FastMCP("remote-server-mcp")
+
+# InfluxDB API endpoint whitelist (defense-in-depth)
+# Limits the admin token to read-only / info endpoints only.
+# Even if config or code is modified later, requests to destructive
+# endpoints (/configure/database, /write_lp, etc.) are blocked here.
+INFLUXDB_ALLOWED_ENDPOINTS: frozenset[str] = frozenset(
+    {
+        "/api/v3/query_sql",
+        "/api/v3/query_influxql",
+        "/health",
+        "/metrics",
+        "/ping",
+    }
+)
 
 
 @mcp.tool()
@@ -329,6 +345,232 @@ async def search_service_logs(service: str, pattern: str, lines: int = 1000) -> 
 
 
 @mcp.tool()
+async def query_influxdb(query: str, database: str | None = None) -> str:
+    """Query InfluxDB v3 using SQL (read-only).
+
+    Executes a SELECT query against the InfluxDB v3 HTTP API.
+    Requires influxdb to be enabled in config.yaml.
+
+    Args:
+        query: SQL query (must start with SELECT)
+        database: Database name (overrides config default)
+
+    Returns:
+        Query results in JSON format
+    """
+    influxdb_config = config.get("influxdb", {})
+    if not influxdb_config.get("enabled", False):
+        return (
+            "❌ InfluxDB queries are not enabled.\n"
+            "Set 'influxdb.enabled: true' in config.yaml and configure host/port."
+        )
+
+    # Validate the query
+    validated_query = security.validate_influxdb_query(query)
+    if validated_query is None:
+        return (
+            "❌ Invalid query. Queries must:\n"
+            "- Start with SELECT (read-only only)\n"
+            "- Not contain SQL injection characters (;, --, /*, etc.)\n"
+            "- Not contain shell injection characters"
+        )
+
+    db = database or influxdb_config.get("database")
+    if not db:
+        return (
+            "❌ No database specified. Provide 'database' parameter or set "
+            "'influxdb.database' in config.yaml."
+        )
+
+    host = influxdb_config.get("host", "localhost")
+    port = influxdb_config.get("port", 8181)
+    use_https = influxdb_config.get("use_https", False)
+    token = influxdb_config.get("token")
+    limit = min(influxdb_config.get("query_limit", 1000), 10000)
+
+    scheme = "https" if use_https else "http"
+    path = "/api/v3/query_sql"
+    url = f"{scheme}://{host}:{port}{path}"
+
+    # Defense-in-depth: whitelist the endpoint so even if the path
+    # construction changes, requests to admin/write endpoints are blocked
+    if path not in INFLUXDB_ALLOWED_ENDPOINTS:
+        return f"❌ Blocked: endpoint '{path}' is not in the allowed whitelist"
+
+    params = {
+        "db": db,
+        "q": validated_query,
+        "limit": limit,
+    }
+
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url, json=params, headers=headers, timeout=30
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    formatted = json.dumps(data, indent=2)
+                    return f"✅ Query successful\n\n{formatted}"
+                else:
+                    error_body = await response.text()
+                    return (
+                        f"❌ InfluxDB query failed (HTTP {response.status})\n"
+                        f"{error_body[:2000]}"
+                    )
+    except aiohttp.ClientError as e:
+        return f"❌ Connection error: {e}"
+    except TimeoutError:
+        return "❌ Query timed out after 30 seconds"
+
+
+@mcp.tool()
+async def query_prometheus(query: str, time: str | None = None) -> str:
+    """Query Prometheus using PromQL (read-only).
+
+    Executes an instant query against the Prometheus HTTP API.
+    Requires prometheus to be enabled in config.yaml.
+
+    Args:
+        query: PromQL expression
+        time: Optional RFC3339 timestamp or Unix timestamp (defaults to now)
+
+    Returns:
+        Query results in JSON format
+    """
+    prometheus_config = config.get("prometheus", {})
+    if not prometheus_config.get("enabled", False):
+        return (
+            "❌ Prometheus queries are not enabled.\n"
+            "Set 'prometheus.enabled: true' in config.yaml and configure host/port."
+        )
+
+    # Validate the query
+    validated_query = security.validate_prometheus_query(query)
+    if validated_query is None:
+        return (
+            "❌ Invalid query. Queries must:\n"
+            "- Not contain shell injection characters (;, `, $, |, etc.)\n"
+            "- Not contain quotes or newlines"
+        )
+
+    host = prometheus_config.get("host", "localhost")
+    port = prometheus_config.get("port", 9090)
+    use_https = prometheus_config.get("use_https", False)
+    token = prometheus_config.get("token")
+
+    scheme = "https" if use_https else "http"
+    url = f"{scheme}://{host}:{port}/api/v1/query"
+
+    params: dict[str, str] = {"query": validated_query}
+    if time:
+        params["time"] = time
+
+    headers: dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url, params=params, headers=headers, timeout=30
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get("status") == "success":
+                        formatted = json.dumps(data["data"], indent=2)
+                        return f"✅ Query successful\n\n{formatted}"
+                    else:
+                        error_type = data.get("errorType", "unknown")
+                        error_msg = data.get("error", "Unknown error")
+                        return (
+                            f"❌ PromQL query error\n"
+                            f"Type: {error_type}\n"
+                            f"Error: {error_msg}"
+                        )
+                else:
+                    error_body = await response.text()
+                    return (
+                        f"❌ Prometheus query failed (HTTP {response.status})\n"
+                        f"{error_body[:2000]}"
+                    )
+    except aiohttp.ClientError as e:
+        return f"❌ Connection error: {e}"
+    except TimeoutError:
+        return "❌ Query timed out after 30 seconds"
+
+
+@mcp.tool()
+async def get_prometheus_targets() -> str:
+    """Get scrape targets from Prometheus.
+
+    Returns the list of all configured scrape targets and their current state.
+    Requires prometheus to be enabled in config.yaml.
+
+    Returns:
+        List of scrape targets with their status
+    """
+    prometheus_config = config.get("prometheus", {})
+    if not prometheus_config.get("enabled", False):
+        return (
+            "❌ Prometheus queries are not enabled.\n"
+            "Set 'prometheus.enabled: true' in config.yaml and configure host/port."
+        )
+
+    host = prometheus_config.get("host", "localhost")
+    port = prometheus_config.get("port", 9090)
+    use_https = prometheus_config.get("use_https", False)
+    token = prometheus_config.get("token")
+
+    scheme = "https" if use_https else "http"
+    url = f"{scheme}://{host}:{port}/api/v1/targets"
+
+    headers: dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=30) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get("status") == "success":
+                        targets = data.get("data", {}).get("activeTargets", [])
+                        if not targets:
+                            return "No active targets configured in Prometheus."
+
+                        # Format target summary
+                        lines = [f"✅ Found {len(targets)} active targets:\n"]
+                        for target in targets:
+                            labels = target.get("labels", {})
+                            job = labels.get("job", "unknown")
+                            instance = labels.get("instance", "unknown")
+                            health = target.get("health", "unknown")
+                            last_error = target.get("lastError", "")
+                            lines.append(
+                                f"  • {job}/{instance}: {health}"
+                                + (f" ({last_error})" if last_error else "")
+                            )
+                        return "\n".join(lines)
+                    else:
+                        return f"❌ Unexpected response: {json.dumps(data, indent=2)}"
+                else:
+                    error_body = await response.text()
+                    return (
+                        f"❌ Failed to get targets (HTTP {response.status})\n"
+                        f"{error_body[:2000]}"
+                    )
+    except aiohttp.ClientError as e:
+        return f"❌ Connection error: {e}"
+    except TimeoutError:
+        return "❌ Request timed out after 30 seconds"
+
+
+@mcp.tool()
 async def get_server_health() -> str:
     """Get overall server health (CPU, memory, disk) - no sensitive data.
 
@@ -373,7 +615,8 @@ async def main():
     logger.info(
         "Available tools: list_services, get_service_logs, get_service_status, "
         "restart_service, start_service, stop_service, get_service_file, "
-        "list_service_files, search_service_logs, get_server_health"
+        "list_service_files, search_service_logs, get_server_health, "
+        "query_influxdb, query_prometheus, get_prometheus_targets"
     )
     await mcp.run_stdio_async()
 
