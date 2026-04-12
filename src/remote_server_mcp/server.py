@@ -418,7 +418,23 @@ async def query_influxdb(query: str, database: str | None = None) -> str:
                     return f"✅ Query successful\n\n{formatted}"
                 else:
                     error_body = await response.text()
+
+                    # Prepend a hint for unbounded queries that fail.
+                    # This is additive — the original error body is preserved
+                    # verbatim, so Enterprise users see the real response too.
+                    hint = ""
+                    query_lower = validated_query.lower()
+                    has_time_filter = "where" in query_lower and "time" in query_lower
+                    if not has_time_filter:
+                        hint = (
+                            "💡 Tip: InfluxDB 3 Core has a file-scan limit. "
+                            "Queries without a `WHERE time` clause may fail "
+                            "with HTTP 500. Add a time range like:\n"
+                            "   WHERE time > now() - INTERVAL '1 hour'\n\n"
+                        )
+
                     return (
+                        f"{hint}"
                         f"❌ InfluxDB query failed (HTTP {response.status})\n"
                         f"{error_body[:2000]}"
                     )
